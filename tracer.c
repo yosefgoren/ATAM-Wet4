@@ -67,7 +67,7 @@ void runDebugger(){
         if(is_instr_syscall){
             int sys_ret_val;
             if(isErrorRetvalue(&sys_ret_val))
-                printf("PRF:: syscall in %xll returned with %d\n",
+                printf("PRF:: syscall in %llx returned with %d\n",
                     instr_addr, sys_ret_val);
         }
         
