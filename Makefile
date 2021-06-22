@@ -1,5 +1,5 @@
 CC=gcc
-COMP_FLAG= -std=c99
+COMP_FLAG= -std=c99 -g
 BINARY_PATH=bin/
 
 all: tracer.out cp1.out cp2.out ap1.out
@@ -8,7 +8,7 @@ tracer.o: tracer.c
 	$(CC) $(COMP_FLAG) -c $^ -o $(BINARY_PATH)$@
 
 tracer.out: tracer.o
-	$(CC) $(COMP_FLAG) $(BINARY_PATH)$^ -o $(BINARY_PATH)$@
+	$(CC) $(COMP_FLAG) $(BINARY_PATH)$^ -o $@
 
 cp1.o: cp1.c
 	$(CC) $(COMP_FLAG) -c $^ -o $(BINARY_PATH)$@
@@ -30,4 +30,4 @@ ap1.out: ap1.o
 	ld $(BINARY_PATH)$^ -o $(BINARY_PATH)$@
 
 clean:
-	rm -f $(BINARY_PATH)*.out $(BINARY_PATH)*.o
+	rm -f $(BINARY_PATH)*.out $(BINARY_PATH)*.o tracer.out
