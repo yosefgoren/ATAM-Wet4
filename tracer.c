@@ -8,6 +8,13 @@
 #include <fcntl.h>
 #include <string.h>
 
+#define MY_DEBUG
+#ifdef MY_DEBUG
+#define DB(s) s
+#else
+#define DB(s)
+#endif
+
 #define true    1
 #define false   0
 #define LOCAL   0
@@ -47,16 +54,12 @@ struct user_regs_struct {
     unsigned long long int gs;
 };
 
-int spid;
-
 int ropen(char* fname){
     int fd = open(fname, O_RDONLY);
     if(fd == -1)
         perror("opne");
     return fd;
 }
-
-
 
 typedef enum {FOUND_GLOBAL, FOUND_LOCAL, NOT_FOUND}  funcBindResult;
 
@@ -94,8 +97,8 @@ funcBindResult addrOfFunctionNamed(char* func_name, char* elf_name, Elf64_Addr* 
         pread(fd, &sh_name_indx, sizeof(Elf64_Word), elf_shoff);
         char *sh_name = mallocStringFromTable(fd, shdr_shstrtab.sh_offset, sh_name_indx); //idk about this seems costly
         if (strcmp(sh_name, ".symtab") == 0) { 
-                pread(fd, &shdr_symtab, sizeof(Elf64_Shdr), elf_shoff); //add do_sys
-                foundSym = true;
+            pread(fd, &shdr_symtab, sizeof(Elf64_Shdr), elf_shoff); //add do_sys
+            foundSym = true;
         }
         else if (strcmp(sh_name, ".strtab") == 0) {
             pread(fd, &shdr_strtab, sizeof(Elf64_Shdr), elf_shoff); //add do_sys
@@ -126,7 +129,7 @@ funcBindResult addrOfFunctionNamed(char* func_name, char* elf_name, Elf64_Addr* 
                 return FOUND_GLOBAL;
             }
             else if ((bind == LOCAL) && ((type == NOTYPE) || (type == FUNC))) {
-                *addr = NULL;
+                //OLD: *addr = `NULL;
                 return FOUND_LOCAL;
             }
         }
@@ -134,11 +137,11 @@ funcBindResult addrOfFunctionNamed(char* func_name, char* elf_name, Elf64_Addr* 
         free(sym_name);
     }
 
-    *addr = NULL;
+    //*addr = NULL;
     return NOT_FOUND;
 }
 
-int isInstrSyscall(void** instr_addr){
+int isInstrSyscall(void** instr_addr, int spid){
     struct user_regs_struct regs;
     ptrace(PTRACE_GETREGS, spid, NULL ,&regs);
     long instr = ptrace(PTRACE_PEEKTEXT, spid, regs.rip, NULL);
@@ -147,14 +150,14 @@ int isInstrSyscall(void** instr_addr){
     //printf("0x%lx\n", instr<<48>>48);
 }
 
-int isErrorRetvalue(int* ret_val){
+int isErrorRetvalue(int* ret_val, int spid){
     struct user_regs_struct regs;
     ptrace(PTRACE_GETREGS, spid, NULL ,&regs);
     *ret_val = regs.rax;
     return *ret_val < 0;
 }
 
-void runDebugger(){
+void oldRunDebugger(int spid){
     int wait_status;
     int is_instr_syscall = 0;
     void* instr_addr = NULL;
@@ -163,12 +166,12 @@ void runDebugger(){
     while(WIFSTOPPED(wait_status)){
         if(is_instr_syscall){
             int sys_ret_val;
-            if(isErrorRetvalue(&sys_ret_val))
+            if(isErrorRetvalue(&sys_ret_val, spid))
                 printf("PRF:: syscall in %llx returned with %d\n",
-                    instr_addr, sys_ret_val);
+                    (long long int)instr_addr, sys_ret_val);
         }
         
-        is_instr_syscall = isInstrSyscall(&instr_addr);
+        is_instr_syscall = isInstrSyscall(&instr_addr, spid);
         
         if(ptrace(PTRACE_SINGLESTEP, spid, NULL, NULL) < 0){
             perror("ptrace");
@@ -179,27 +182,70 @@ void runDebugger(){
     }
 }
 
+void runDebugger(int spid, Elf64_Addr func_addr){
+    int wait_status;
+    struct user_regs_struct regs;
+
+    wait(&wait_status);
+    ptrace(PTRACE_GETREGS, spid, 0, &regs);
+    DB(printf("initial rip = %llx\n", regs.rip));
+
+
+    long starting_text_of_func = ptrace(PTRACE_PEEKTEXT, spid, (void*)func_addr, NULL);
+    unsigned long its_a_twap = (0xffffffffffffff00 & starting_text_of_func) | 0xcc;
+    DB(printf("original text at: %lx, is: %lx, the twap: %lx.\n",
+        func_addr, starting_text_of_func, its_a_twap));
+    ptrace(PTRACE_POKETEXT, spid, (void*)func_addr, (void*)starting_text_of_func);
+
+    ptrace(PTRACE_CONT, spid, NULL, NULL);
+    wait(&wait_status);
+    
+    ptrace(PTRACE_GETREGS, spid, 0, &regs);
+    DB(printf("child stopped at rip = %llx\n", regs.rip));
+    unsigned long func_ret_addr = ptrace(PTRACE_PEEKDATA, spid, (void*)(regs.rsp), NULL);
+    DB(printf("the return adress of the function at: %lx is: %lx.\n", func_addr, func_ret_addr));
+
+    ptrace(PTRACE_CONT, spid, NULL, NULL);
+    wait(&wait_status);
+}
+
 int main(int argc, char** argv){
-    if(argc < 2){
-        printf("expecting a parameter to run.\n");
+    if(argc < 3){
+        printf("expecting two parameters!\n");
         exit(1);
     }
 
-    spid = fork();
+    char* func_name = argv[1];
+    char* exefile_name = argv[2];
+
+    Elf64_Addr func_addr;
+    funcBindResult res = addrOfFunctionNamed(func_name, exefile_name, &func_addr);
+    switch (res)
+    {
+    case FOUND_GLOBAL:
+        DB(printf("%s func_addr: %lx\n",func_name ,func_addr));
+        break;
+    case FOUND_LOCAL:
+        printf("PRF:: local found!\n");
+        return 0;
+    case NOT_FOUND:
+        printf("PRF:: not found!\n");
+        return 0;
+    }
+
+    
+    int spid = fork();
     if(spid == 0){
-        printf("son with pid: %d, about to run program: %s.\n", getpid(), argv[1]);
+        DB(printf("son with pid: %d, about to run program: %s.\n", getpid(), exefile_name));
         if(ptrace(PTRACE_TRACEME, 0, NULL, NULL) < 0){
             perror("ptrace");
             exit(1);
         } else {
-            execv(argv[1], argv+1);
+            execv(exefile_name, argv+2);
         }
     }
 
-    Elf64_Addr addr;
-    addrOfFunctionNamed("dumpSection", argv[1], &addr);
-    printf("PRF:: dumpSection addr: %llx\n", addr);
-    runDebugger(spid);
+    runDebugger(spid, func_addr);
 
     return 0;
 }
