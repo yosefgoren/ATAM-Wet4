@@ -77,7 +77,7 @@ char *mallocStringFromTable(int elf_fd, Elf64_Off table_off, Elf64_Word name_ind
 }
 
 funcBindResult addrOfFunctionNamed(char* func_name, char* elf_name, Elf64_Addr* addr){
-    //not the prettiest one, but sure does the job
+    //not the prettiest one, but sure does the job (i hope :3)
     Elf64_Ehdr elf_header;
     int fd = ropen(elf_name);                       //add do_sys
     pread(fd, &elf_header, sizeof(Elf64_Ehdr), 0);  //add do_sys
