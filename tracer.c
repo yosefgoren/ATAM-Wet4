@@ -71,12 +71,13 @@ char *mallocStringFromTable(int elf_fd, Elf64_Off table_off, Elf64_Word name_ind
     ++size;
 
     char *res = malloc(size);
-    pread(elf_fd, res, size, table_off+name_indx); //idk why +1 but this works
+    pread(elf_fd, res, size, table_off+name_indx);
 
     return res;
 }
 
 funcBindResult addrOfFunctionNamed(char* func_name, char* elf_name, Elf64_Addr* addr){
+    //not the prettiest one, but sure does the job
     Elf64_Ehdr elf_header;
     int fd = ropen(elf_name);                       //add do_sys
     pread(fd, &elf_header, sizeof(Elf64_Ehdr), 0);  //add do_sys
@@ -86,8 +87,6 @@ funcBindResult addrOfFunctionNamed(char* func_name, char* elf_name, Elf64_Addr* 
 
     Elf64_Shdr shdr_symtab;
     Elf64_Shdr shdr_strtab;
-    // Elf64_Xword sym_size;
-    // Elf64_Xword sym_entsize;
     Elf64_Off elf_shoff = elf_header.e_shoff;
     bool foundSym = false;
     for(uint64_t i = 0; i < elf_header.e_shnum; ++i) {
@@ -96,9 +95,6 @@ funcBindResult addrOfFunctionNamed(char* func_name, char* elf_name, Elf64_Addr* 
         char *sh_name = mallocStringFromTable(fd, shdr_shstrtab.sh_offset, sh_name_indx); //idk about this seems costly
         if (strcmp(sh_name, ".symtab") == 0) { 
                 pread(fd, &shdr_symtab, sizeof(Elf64_Shdr), elf_shoff); //add do_sys
-                //sym_size = shdr_symtab.sh_size;
-                //sym_entsize = shdr_symtab.sh_entsize;
-                
                 foundSym = true;
         }
         else if (strcmp(sh_name, ".strtab") == 0) {
