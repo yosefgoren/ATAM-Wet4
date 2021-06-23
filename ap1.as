@@ -18,6 +18,5 @@ _start:
     movq $msg, %rsi
     movq $-1, %rdx
     syscall
-    syscall
 
     jmp NAME1
