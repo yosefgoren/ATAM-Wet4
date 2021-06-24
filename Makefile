@@ -1,5 +1,5 @@
 CC=gcc
-COMP_FLAG= -std=c99 -g -no-pie
+COMP_FLAG= -std=c99 -g -no-pie -Werror -Wall -pedantic-errors -Wall
 BINARY_PATH=bin/
 
 all: tracer.out $(BINARY_PATH)cp1.out $(BINARY_PATH)cp2.out $(BINARY_PATH)cp3.out $(BINARY_PATH)ap1.out

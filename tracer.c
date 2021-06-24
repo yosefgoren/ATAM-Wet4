@@ -157,6 +157,14 @@ int isErrorRetvalue(int* ret_val, int spid){
     return *ret_val < 0;
 }
 
+void printTraceeRegs(int spid){
+    DB(printf("printRegs:\n"));
+    struct user_regs_struct regs;
+    ptrace(PTRACE_GETREGS, spid, 0, &regs);
+    DB(printf("     rip = %llx\n", regs.rip));
+    DB(printf("     rax = %llx\n", regs.rax));
+}
+
 long addBreakpoint(int spid, Elf64_Addr break_addr){
     DB(printf("adding breakpoint at: %lx.\n", (long)break_addr));
     long original_text = ptrace(PTRACE_PEEKTEXT, spid, (void*)break_addr, NULL);
@@ -169,25 +177,76 @@ long addBreakpoint(int spid, Elf64_Addr break_addr){
 void removeBreakpoint(int spid, Elf64_Addr break_addr, long original_text){
     DB(printf("removing breakpoint at: %lx, original text: %lx.\n", (long int)break_addr, original_text));
     ptrace(PTRACE_POKETEXT, spid, (void*)break_addr, (void*)original_text);
+    long data = ptrace(PTRACE_PEEKTEXT, spid, (void*)break_addr, NULL);
+    DB(printf("removeBreakpoint, after breakpoint text is: %lx.\n", data));
+}
+
+/**
+ * returns 0 if the tracee stopped and returns 1 if it finished.
+ */
+int advanceBreakpoint(int spid, Elf64_Addr break_addr, long original_text){
+    ptrace(PTRACE_CONT, spid, 0, 0);
+    // int wait_status;
+    siginfo_t siginfo;
+    int res_pid;
+    if((res_pid = waitid(P_PID, spid, &siginfo, WCONTINUED)) == -1){
+        perror("waitpid");
+        return 1;
+    }
+    DB(printf("res_pid = %d.\n", res_pid));
+    // if(!WIFSTOPPED(wait_status))
+    //     return 1;
+    if(siginfo.si_code != CLD_TRAPPED)
+        return 1;
+    switch(siginfo.si_code){
+        case CLD_CONTINUED:
+        DB(printf("si_code = continued\n"));
+        break;
+        case CLD_DUMPED:
+        DB(printf("si_code = dumped\n"));
+        break;
+        case CLD_EXITED:
+        DB(printf("si_code = exited\n"));
+        break;
+        case CLD_KILLED:
+        DB(printf("si_code = killed\n"));
+        break;
+        case CLD_STOPPED:
+        DB(printf("si_code = stopped\n"));
+        break;
+        case CLD_TRAPPED:
+        DB(printf("si_code = trapped\n"));      
+        break;
+        default:
+        DB(printf("default reached!\n"));
+    }
+    struct user_regs_struct regs;
+    ptrace(PTRACE_GETREGS, spid, 0, &regs);
+    --regs.rip;
+    ptrace(PTRACE_SETREGS, spid, 0, &regs);
+    removeBreakpoint(spid, break_addr, original_text);
+    return 0;
 }
 
 void runFirstArrival(int spid, Elf64_Addr break_addr, void (*to_do)(int)){
     int wait_status;
     wait(&wait_status);
-    if(&wait_status);
     if(!WIFSTOPPED(wait_status)){
         DB(printf("runFirstArrival: the son program did not stop at start.\n"));
         return;
     }
 
     long original_text = addBreakpoint(spid, break_addr);
-    ptrace(PTRACE_CONT, spid, NULL, NULL);
-    wait(&wait_status);
-    if(!WIFSTOPPED(wait_status)){
+    if(advanceBreakpoint(spid, break_addr, original_text) == 1){
         DB(printf("runFirstArrival: program did not get to specified address.\n"));
         return;
     }
+    to_do(spid);
 
+    ptrace(PTRACE_CONT, spid, NULL, NULL);    
+    wait(&wait_status);
+    
+    DB(printf("runFirstArrival: finished.\n"));
 }
 
 void runEachArrival(int spid, Elf64_Addr break_addr, void (*to_do)(int)){
@@ -198,22 +257,16 @@ void runEachArrival(int spid, Elf64_Addr break_addr, void (*to_do)(int)){
         return;
     while(1){
         long initial_text_at_func = addBreakpoint(spid, break_addr);
-        ptrace(PTRACE_CONT, spid, NULL, NULL);
-        wait(&wait_status);
-        if(!WIFSTOPPED(wait_status))
+        int ret_val = advanceBreakpoint(spid, break_addr, initial_text_at_func);
+        DB(printf("ret_val = %d.\n", ret_val));
+        if(ret_val == 1){
+            DB(printf("runEachArrival: finished reaching all arrivals to specified addr.\n"));
             return;
+        }
         to_do(spid);
-        removeBreakpoint(spid, break_addr, initial_text_at_func);
         ptrace(PTRACE_SINGLESTEP, spid, NULL, NULL);
+        wait(&wait_status);
     }
-}
-
-void printTraceeRegs(int spid){
-    DB(printf("printRegs:\n"));
-    struct user_regs_struct regs;
-    ptrace(PTRACE_GETREGS, spid, 0, &regs);
-    DB(printf("     rip = %llx\n", regs.rip));
-    DB(printf("     rax = %llx\n", regs.rax));
 }
 
 void runDebugger(int spid, Elf64_Addr fun_addr){
