@@ -16,7 +16,7 @@ $(BINARY_PATH)cp%.o: cp%.c
 $(BINARY_PATH)cp%.out: $(BINARY_PATH)cp%.o
 	$(CC) $(COMP_FLAG) $^ -o $@
 
-$(BINARY_PATH)ap%.o: ap%.as
+$(BINARY_PATH)ap%.o: ap%.asm
 	as $^ -o $@
 
 $(BINARY_PATH)ap%.out: $(BINARY_PATH)ap%.o

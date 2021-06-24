@@ -81,7 +81,6 @@ char *mallocStringFromTable(int elf_fd, Elf64_Off table_off, Elf64_Word name_ind
 }
 
 funcBindResult addrOfFunctionNamed(char* func_name, char* elf_name, Elf64_Addr* addr){
-    //not the prettiest one, but sure does the job (i hope :3)
     Elf64_Ehdr elf_header;
     int fd = ropen(elf_name);                       //add do_sys
     pread(fd, &elf_header, sizeof(Elf64_Ehdr), 0);  //add do_sys
@@ -96,7 +95,7 @@ funcBindResult addrOfFunctionNamed(char* func_name, char* elf_name, Elf64_Addr* 
     for(uint64_t i = 0; i < elf_header.e_shnum; ++i) {
         Elf64_Word sh_name_indx;        
         pread(fd, &sh_name_indx, sizeof(Elf64_Word), elf_shoff);
-        char *sh_name = mallocStringFromTable(fd, shdr_shstrtab.sh_offset, sh_name_indx); //idk about this seems costly
+        char *sh_name = mallocStringFromTable(fd, shdr_shstrtab.sh_offset, sh_name_indx);
         if (strcmp(sh_name, ".symtab") == 0) { 
             pread(fd, &shdr_symtab, sizeof(Elf64_Shdr), elf_shoff); //add do_sys
             foundSym = true;
@@ -158,56 +157,67 @@ int isErrorRetvalue(int* ret_val, int spid){
     return *ret_val < 0;
 }
 
-void oldRunDebugger(int spid){
+long addBreakpoint(int spid, Elf64_Addr break_addr){
+    DB(printf("adding breakpoint at: %lx.\n", (long)break_addr));
+    long original_text = ptrace(PTRACE_PEEKTEXT, spid, (void*)break_addr, NULL);
+    unsigned long trapped_text = (0xffffffffffffff00 & original_text) | 0xcc;
+    DB(printf("     original text: %lx, new text: %lx.\n", original_text, trapped_text));
+    ptrace(PTRACE_POKETEXT, spid, (void*)break_addr, (void*)trapped_text);
+    return original_text;
+}
+
+void removeBreakpoint(int spid, Elf64_Addr break_addr, long original_text){
+    DB(printf("removing breakpoint at: %lx, original text: %lx.\n", (long int)break_addr, original_text));
+    ptrace(PTRACE_POKETEXT, spid, (void*)break_addr, (void*)original_text);
+}
+
+void runFirstArrival(int spid, Elf64_Addr break_addr, void (*to_do)(int)){
     int wait_status;
-    int is_instr_syscall = 0;
-    void* instr_addr = NULL;
-
     wait(&wait_status);
-    while(WIFSTOPPED(wait_status)){
-        if(is_instr_syscall){
-            int sys_ret_val;
-            if(isErrorRetvalue(&sys_ret_val, spid))
-                printf("PRF:: syscall in %llx returned with %d\n",
-                    (long long int)instr_addr, sys_ret_val);
-        }
-        
-        is_instr_syscall = isInstrSyscall(&instr_addr, spid);
-        
-        if(ptrace(PTRACE_SINGLESTEP, spid, NULL, NULL) < 0){
-            perror("ptrace");
-            exit(1);
-        }
+    if(&wait_status);
+    if(!WIFSTOPPED(wait_status)){
+        DB(printf("runFirstArrival: the son program did not stop at start.\n"));
+        return;
+    }
 
+    long original_text = addBreakpoint(spid, break_addr);
+    ptrace(PTRACE_CONT, spid, NULL, NULL);
+    wait(&wait_status);
+    if(!WIFSTOPPED(wait_status)){
+        DB(printf("runFirstArrival: program did not get to specified address.\n"));
+        return;
+    }
+
+}
+
+void runEachArrival(int spid, Elf64_Addr break_addr, void (*to_do)(int)){
+    int wait_status;
+    
+    wait(&wait_status);
+    if(!WIFSTOPPED(wait_status))
+        return;
+    while(1){
+        long initial_text_at_func = addBreakpoint(spid, break_addr);
+        ptrace(PTRACE_CONT, spid, NULL, NULL);
         wait(&wait_status);
+        if(!WIFSTOPPED(wait_status))
+            return;
+        to_do(spid);
+        removeBreakpoint(spid, break_addr, initial_text_at_func);
+        ptrace(PTRACE_SINGLESTEP, spid, NULL, NULL);
     }
 }
 
-void runDebugger(int spid, Elf64_Addr func_addr){
-    int wait_status;
+void printTraceeRegs(int spid){
+    DB(printf("printRegs:\n"));
     struct user_regs_struct regs;
-
-    wait(&wait_status);
     ptrace(PTRACE_GETREGS, spid, 0, &regs);
-    DB(printf("initial rip = %llx\n", regs.rip));
+    DB(printf("     rip = %llx\n", regs.rip));
+    DB(printf("     rax = %llx\n", regs.rax));
+}
 
-
-    long starting_text_of_func = ptrace(PTRACE_PEEKTEXT, spid, (void*)func_addr, NULL);
-    unsigned long its_a_twap = (0xffffffffffffff00 & starting_text_of_func) | 0xcc;
-    DB(printf("original text at: %lx, is: %lx, the twap: %lx.\n",
-        func_addr, starting_text_of_func, its_a_twap));
-    ptrace(PTRACE_POKETEXT, spid, (void*)func_addr, (void*)starting_text_of_func);
-
-    ptrace(PTRACE_CONT, spid, NULL, NULL);
-    wait(&wait_status);
-    
-    ptrace(PTRACE_GETREGS, spid, 0, &regs);
-    DB(printf("child stopped at rip = %llx\n", regs.rip));
-    unsigned long func_ret_addr = ptrace(PTRACE_PEEKDATA, spid, (void*)(regs.rsp), NULL);
-    DB(printf("the return adress of the function at: %lx is: %lx.\n", func_addr, func_ret_addr));
-
-    ptrace(PTRACE_CONT, spid, NULL, NULL);
-    wait(&wait_status);
+void runDebugger(int spid, Elf64_Addr fun_addr){
+    runEachArrival(spid, fun_addr, printTraceeRegs);
 }
 
 int main(int argc, char** argv){
@@ -224,7 +234,7 @@ int main(int argc, char** argv){
     switch (res)
     {
     case FOUND_GLOBAL:
-        DB(printf("%s func_addr: %lx\n",func_name ,func_addr));
+        //DB(printf("%s func_addr: %lx\n",func_name ,func_addr));
         break;
     case FOUND_LOCAL:
         printf("PRF:: local found!\n");
@@ -237,7 +247,7 @@ int main(int argc, char** argv){
     
     int spid = fork();
     if(spid == 0){
-        DB(printf("son with pid: %d, about to run program: %s.\n", getpid(), exefile_name));
+        //DB(printf("son with pid: %d, about to run program: %s.\n", getpid(), exefile_name));
         if(ptrace(PTRACE_TRACEME, 0, NULL, NULL) < 0){
             perror("ptrace");
             exit(1);
