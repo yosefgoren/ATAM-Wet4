@@ -24,6 +24,7 @@
 #define FUNC    2
 
 typedef unsigned char bool;
+typedef unsigned long long MemAdrr;
 
 struct user_regs_struct {
     unsigned long long int r15;
@@ -141,20 +142,19 @@ funcBindResult addrOfFunctionNamed(char* func_name, char* elf_name, Elf64_Addr* 
     return NOT_FOUND;
 }
 
-int isInstrSyscall(void** instr_addr, int spid){
+int isNextInstrSyscall(int spid){
     struct user_regs_struct regs;
     ptrace(PTRACE_GETREGS, spid, NULL ,&regs);
     long instr = ptrace(PTRACE_PEEKTEXT, spid, regs.rip, NULL);
-    *instr_addr = (void*)regs.rip;
     return (instr<<48>>48) == 0x050f;
-    //printf("0x%lx\n", instr<<48>>48);
 }
 
-int isErrorRetvalue(int* ret_val, int spid){
+int isSyscallErrorRetvalue(int spid, unsigned long long* ret_val){
     struct user_regs_struct regs;
     ptrace(PTRACE_GETREGS, spid, NULL ,&regs);
-    *ret_val = regs.rax;
-    return *ret_val < 0;
+    if(ret_val != NULL)
+        *ret_val = regs.rax;
+    return regs.rax < 0;
 }
 
 void printTraceeRegs(int spid){
@@ -163,6 +163,18 @@ void printTraceeRegs(int spid){
     ptrace(PTRACE_GETREGS, spid, 0, &regs);
     DB(printf("     rip = %llx\n", regs.rip));
     DB(printf("     rax = %llx\n", regs.rax));
+}
+
+long getTraceeStackTop(int spid){
+    struct user_regs_struct regs;
+    ptrace(PTRACE_GETREGS, spid, 0, &regs);
+    return ptrace(PTRACE_PEEKDATA, spid, regs.rsp, NULL);
+}
+
+void printStackTop(int spid){
+    DB(printf("printStackTop:\n"));
+    long stack_top = getTraceeStackTop(spid);
+    DB(printf("    value in top of stack is: %lx\n", stack_top));
 }
 
 long addBreakpoint(int spid, Elf64_Addr break_addr){
@@ -174,11 +186,15 @@ long addBreakpoint(int spid, Elf64_Addr break_addr){
     return original_text;
 }
 
-void removeBreakpoint(int spid, Elf64_Addr break_addr, long original_text){
+void removeBreakpointAndFixRip(int spid, Elf64_Addr break_addr, long original_text){
+    struct user_regs_struct regs;
+    ptrace(PTRACE_GETREGS, spid, 0, &regs);
+    --regs.rip;
+    ptrace(PTRACE_SETREGS, spid, 0, &regs);
+    
     DB(printf("removing breakpoint at: %lx, original text: %lx.\n", (long int)break_addr, original_text));
     ptrace(PTRACE_POKETEXT, spid, (void*)break_addr, (void*)original_text);
-    long data = ptrace(PTRACE_PEEKTEXT, spid, (void*)break_addr, NULL);
-    DB(printf("removeBreakpoint, after breakpoint text is: %lx.\n", data));
+
 }
 
 /**
@@ -186,45 +202,13 @@ void removeBreakpoint(int spid, Elf64_Addr break_addr, long original_text){
  */
 int advanceBreakpoint(int spid, Elf64_Addr break_addr, long original_text){
     ptrace(PTRACE_CONT, spid, 0, 0);
-    // int wait_status;
-    siginfo_t siginfo;
-    int res_pid;
-    if((res_pid = waitid(P_PID, spid, &siginfo, WCONTINUED)) == -1){
-        perror("waitpid");
+    
+    int wait_status;
+    if(wait(&wait_status) == -1 || !WIFSTOPPED(wait_status)){
         return 1;
     }
-    DB(printf("res_pid = %d.\n", res_pid));
-    // if(!WIFSTOPPED(wait_status))
-    //     return 1;
-    if(siginfo.si_code != CLD_TRAPPED)
-        return 1;
-    switch(siginfo.si_code){
-        case CLD_CONTINUED:
-        DB(printf("si_code = continued\n"));
-        break;
-        case CLD_DUMPED:
-        DB(printf("si_code = dumped\n"));
-        break;
-        case CLD_EXITED:
-        DB(printf("si_code = exited\n"));
-        break;
-        case CLD_KILLED:
-        DB(printf("si_code = killed\n"));
-        break;
-        case CLD_STOPPED:
-        DB(printf("si_code = stopped\n"));
-        break;
-        case CLD_TRAPPED:
-        DB(printf("si_code = trapped\n"));      
-        break;
-        default:
-        DB(printf("default reached!\n"));
-    }
-    struct user_regs_struct regs;
-    ptrace(PTRACE_GETREGS, spid, 0, &regs);
-    --regs.rip;
-    ptrace(PTRACE_SETREGS, spid, 0, &regs);
-    removeBreakpoint(spid, break_addr, original_text);
+
+    removeBreakpointAndFixRip(spid, break_addr, original_text);
     return 0;
 }
 
@@ -256,9 +240,10 @@ void runEachArrival(int spid, Elf64_Addr break_addr, void (*to_do)(int)){
     if(!WIFSTOPPED(wait_status))
         return;
     while(1){
+        DB(printf("\nrunEachArrival: stating main loop.\n"));
         long initial_text_at_func = addBreakpoint(spid, break_addr);
         int ret_val = advanceBreakpoint(spid, break_addr, initial_text_at_func);
-        DB(printf("ret_val = %d.\n", ret_val));
+        //DB(printf("ret_val = %d.\n", ret_val));
         if(ret_val == 1){
             DB(printf("runEachArrival: finished reaching all arrivals to specified addr.\n"));
             return;
@@ -269,8 +254,104 @@ void runEachArrival(int spid, Elf64_Addr break_addr, void (*to_do)(int)){
     }
 }
 
+enum WhatToDo{
+    CHECK_SYSCALL_RESULT,
+    IGNORE_NEXT_BREAKPOINT,
+    FINISH_HANDLING_FUNCTION
+};
+#define WAIT_AND_CHECK_RES(caller_name)\
+    if(wait(NULL) == -1){ \
+        DB(printf(caller_name));\
+        DB(printf(": tracee eneded unexpectedly.\n"));\
+        return;\
+    }
+
+enum WhatToDo howToHandleTraceeStopped(int spid, MemAdrr orig_rsp){
+    struct user_regs_struct regs;
+    ptrace(PTRACE_GETREGS, spid, NULL, &regs);
+    MemAdrr curr_rsp = regs.rsp;
+    if(curr_rsp > orig_rsp)
+        return FINISH_HANDLING_FUNCTION;
+    
+    long last_text = ptrace(PTRACE_PEEKTEXT, regs.rip-1, NULL);
+    if((last_text & 0x00000000000000ff) == 0xcc)
+        return IGNORE_NEXT_BREAKPOINT;
+    return CHECK_SYSCALL_RESULT;
+}
+
+void checkSyscallResult(int spid){
+    struct user_regs_struct regs;
+    ptrace(PTRACE_GETREGS, spid, NULL, &regs);
+    MemAdrr addr_of_syscall = regs.rip;
+
+    ptrace(PTRACE_SYSCALL, spid, NULL, NULL);
+    WAIT_AND_CHECK_RES("checkSyscallResult");
+
+    unsigned long long retval;
+    if(isSyscallErrorRetvalue(spid, &retval)){
+        printf("PRF:: syscall in %llx returned with %lld\n", addr_of_syscall, retval);
+    }
+}
+
+void ignoreNextBreakpoint(int spid, MemAdrr breakpoint_addr, long orig_breakpoint_text){
+    removeBreakpointAndFixRip(spid, breakpoint_addr, orig_breakpoint_text);
+    if(isNextInstrSyscall(spid))
+        checkSyscallResult(spid);
+    else {
+        ptrace(PTRACE_SINGLESTEP, spid, NULL);
+        WAIT_AND_CHECK_RES("ignoreNextBreakpoint");
+    }
+    addBreakpoint(spid, breakpoint_addr);
+}
+
+void handleSyscallFailsInSubtree(int spid){
+    struct user_regs_struct regs;
+    ptrace(PTRACE_GETREGS, spid, 0, &regs);
+    MemAdrr orig_rsp = regs.rsp;
+    MemAdrr ret_addr = ptrace(PTRACE_PEEKDATA, spid, orig_rsp, NULL);
+
+    long orig_breakpoint_text = addBreakpoint(spid, ret_addr);
+    
+    ptrace(PTRACE_SYSCALL, spid, NULL, NULL);
+    WAIT_AND_CHECK_RES("handleSyscallFailsInSubtree");
+    
+    while(1){
+        enum WhatToDo to_do = howToHandleTraceeStopped(spid, orig_rsp);
+        switch (to_do){
+        case FINISH_HANDLING_FUNCTION:
+            removeBreakpointAndFixRip(spid, ret_addr, orig_breakpoint_text);
+            return;
+            break;
+        case CHECK_SYSCALL_RESULT:
+            checkSyscallResult(spid);
+            break;
+        case IGNORE_NEXT_BREAKPOINT:
+            ignoreNextBreakpoint(spid, ret_addr, orig_breakpoint_text);
+            break;
+        }
+        ptrace(PTRACE_SYSCALL, spid, NULL, NULL);
+        WAIT_AND_CHECK_RES("handleSyscallFailsInSubtree");    
+    }
+
+    // enum WhatToDo to_do = howToHandleTraceeStopped(spid, orig_rsp);
+    // while(to_do != FINISH_HANDLING_FUNCTION){
+    //     if(to_do == CHECK_SYSCALL_RESULT){
+    //         checkSyscallResult(spid);
+    //     } else {
+    //         ignoreNextBreakpoint(spid, ret_addr, orig_breakpoint_text);
+    //     }
+    //     ptrace(PTRACE_SYSCALL, spid, NULL, NULL);
+    //     if(wait(&wait_status) == -1){
+    //         DB(printf("handleSyscallFailsInSubtree: tracee eneded unexpectedly.\n"));
+    //         return;
+    //     }
+    //     to_do = howToHandleTraceeStopped(spid, orig_rsp);
+    // }
+}
+    
 void runDebugger(int spid, Elf64_Addr fun_addr){
-    runEachArrival(spid, fun_addr, printTraceeRegs);
+    //runEachArrival(spid, fun_addr, handleSyscallFailsInSubtree);
+    runEachArrival(spid, fun_addr, handleSyscallFailsInSubtree);
 }
 
 int main(int argc, char** argv){
@@ -297,7 +378,6 @@ int main(int argc, char** argv){
         return 0;
     }
 
-    
     int spid = fork();
     if(spid == 0){
         //DB(printf("son with pid: %d, about to run program: %s.\n", getpid(), exefile_name));

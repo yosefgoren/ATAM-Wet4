@@ -22,6 +22,14 @@ _start:
     xor %rax, %rax
 
     call foo
-    exp_ret_addr:
+
+    exp_ret_1:
+    xor %rax, %rax
+    call foo
+    exp_ret_2:
+    call foo
+    exp_ret_3:
 
     jmp exit
+
+    call foo
