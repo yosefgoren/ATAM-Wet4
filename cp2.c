@@ -1,3 +1,4 @@
+#define _XOPEN_SOURCE 500
 #include "elf64.h"
 #include "string.h"
 #include <stdio.h>
