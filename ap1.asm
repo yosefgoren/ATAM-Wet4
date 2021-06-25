@@ -3,6 +3,7 @@
 .global _start
 msg: .ascii "yolo\n"
 msg_len: .quad msg_len - msg
+msg2: .ascii "loyo\n"
 
 .text
 exit:
@@ -16,7 +17,7 @@ foo:
     xor %rax, %rax
     ret
 
-_start: 
+_start:
     xor %rax, %rax
     xor %rax, %rax
     xor %rax, %rax

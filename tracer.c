@@ -9,7 +9,7 @@
 #include <fcntl.h>
 #include <string.h>
 
-#define MY_DEBUG
+//#define MY_DEBUG
 #ifdef MY_DEBUG
 #define DB(s) s
 #else
@@ -172,9 +172,9 @@ long getTraceeStackTop(int spid){
 }
 
 void printStackTop(int spid){
-    DB(printf("printStackTop:\n"));
+    printf("printStackTop:\n");
     long stack_top = getTraceeStackTop(spid);
-    DB(printf("    value in top of stack is: %lx\n", stack_top));
+    printf("    value in top of stack is: %lx\n", stack_top);
 }
 
 long addBreakpoint(int spid, Elf64_Addr break_addr){
