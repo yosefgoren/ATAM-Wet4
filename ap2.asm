@@ -2,12 +2,11 @@
 
 foo_msg: .ascii "foo\n\0"
 finish_msg: .ascii "finishing\n\0"
-cdd_msg1: .ascii "starting cdd loop.\n\0"
-cdd_msg2: .ascii "cdd 2\n\0"
-cdd_msg3: .ascii "cdd 3\n\0"
 endl_msg: .ascii "\n\0"
 
 .global foo
+.global printstr
+.global printint
 .global _start
 .text
 
@@ -87,7 +86,7 @@ count_dec_digits:#rdi <-- quad_num, ret_value <-- rax
     pop %rbx
     ret
 
-atoi:#rdi <-- num, rsi <-- str_dst 
+iotadec:#rdi <-- num, rsi <-- str_dst 
     # '0' == 48 == 0x30
     push %rcx
     movl $10, %ecx
@@ -116,6 +115,36 @@ atoi:#rdi <-- num, rsi <-- str_dst
     pop %rcx
     ret
 
+
+# iotahex:#rdi <-- num, rsi <-- str_dst 
+#     # '0' == 48 == 0x30
+#     push %rcx
+#     movl $16, %ecx
+#     push %rdx
+#     push %rax
+#     mov %rdi, %rax #cur_num <-- rdi
+
+#     dec %rsi #str_dst--
+#     movb $0, (%rsi) #null terminate the digits string.
+
+#     atoi_check_digit:
+#     cmp $0, %rax
+#     je atoi_finish
+
+#     # divide quad_num by 10, put the remainder char in str_dst and increment the dst:
+#     xor %rdx, %rdx
+#     div %ecx #cur_num <-- cur_num/10
+#     addl $48, %edx #edx <-- remainder in ascii
+#     dec %rsi #str_dst--
+#     movb %dl, (%rsi)
+#     jmp atoi_check_digit
+    
+#     atoi_finish:
+#     pop %rax
+#     pop %rdx
+#     pop %rcx
+#     ret
+
 printdec:#%rdi <-- num
     push %rax
     push %rsi
@@ -128,7 +157,7 @@ printdec:#%rdi <-- num
     #create buffer for digit string:
     sub %rax, %rsp
     dec %rsp
-    call atoi
+    call iotadec
     
     #print the digit string:
     movq %rsp, %rdi
@@ -147,12 +176,50 @@ printdec:#%rdi <-- num
     pop %rax
     ret
 
-_start:
-    movq $1234, %rdi
-    call printdec
+bar:
     
-    movq $finish_msg, %rdi
+
+foo:
+    cmp $0, %rdi
+    je foo_end
+
+    push %rax
+    push %rdi
+
+    dec %rdi
+    call foo
+
+    movq $1, %rax
+    movq $1, %rdi
+    movq $foo_msg, %rsi
+    movq $1, %rdx
+    syscall
+    
+    movq $1, %rax
+    movq $1, %rdi
+    movq $0, %rsi
+    movq $1, %rdx
+    syscall
+
+    movq %rax, %rdi
+    call printdec
+
+    pop %rdi
+    pop %rax
+    foo_end:
+    ret
+
+_start:
+    movq $5, %rdi
+    call foo
+
+    movq $endl_msg, %rdi
     call printstr
+    movq $endl_msg, %rdi
+    call printstr
+
+    movq $2, %rdi
+    call foo
 
     movq $60, %rax
     movq $0, %rdi
