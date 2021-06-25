@@ -28,7 +28,6 @@ pline
 ./prf foo recursion_test.out >recursion_test_out.txt
 CURT=recursion
 pline
-echo "runnning final!"
 ./prf foo is_function_test.out > is_function_test_out.txt
 CURT=is_function
 pline

@@ -125,11 +125,11 @@ funcBindResult addrOfFunctionNamed(char* func_name, char* elf_name, Elf64_Addr* 
             unsigned char bind = ELF64_ST_BIND(info_copy1);
             unsigned char info_copy2 = sym.st_info;
             unsigned char type = ELF64_ST_TYPE(info_copy2);
-            if ((bind == GLOBAL) && ((type == NOTYPE) || (type == FUNC))) {//notype needed?
+            if (bind == GLOBAL && (type == NOTYPE || type == FUNC)) {//notype needed?
                 *addr = sym.st_value;
                 return FOUND_GLOBAL;
             }
-            else if ((bind == LOCAL) && ((type == NOTYPE) || (type == FUNC))) {
+            else if (bind == LOCAL && (type == NOTYPE || type == FUNC)) {
                 //OLD: *addr = `NULL;
                 return FOUND_LOCAL;
             }
