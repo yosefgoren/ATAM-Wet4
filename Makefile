@@ -8,6 +8,8 @@ copyToTests: prf.c prf.out
 	cp prf.c a_test/prf.c
 	cp prf.out b_test/prf.out
 	cp prf.out c_test/prf.out
+	cp prf.out d_test/prf.out
+	cp prf.out e_test/prf.out
 
 $(BINARY_PATH)prf.o: prf.c
 	$(CC) $(COMP_FLAG) -c $^ -o $@

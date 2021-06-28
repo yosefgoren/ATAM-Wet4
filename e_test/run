@@ -1,0 +1,22 @@
+#!/bin/bash
+gcc -std=c99 prf.c -o prf
+./prf foo basic_test.out > basic_test_out.txt
+./prf foo local_test.out > local_test_out.txt
+./prf foo no_faliure_test.out > no_faliure_test_out.txt
+./prf foo not_found_test.out > not_found_test_out.txt
+./prf foo multiple_calls_test.out >  multiple_calls_test_out.txt
+./prf foo recursion_test.out >recursion_test_out.txt
+./prf foo recursive_edge_test.out > recursive_edge_test_out.txt
+cmp basic_test_expected.txt basic_test_out.txt 1> run_out.txt 2>> run_out.txt
+cmp local_test_expected.txt local_test_out.txt 1>> run_out.txt 2>> run_out.txt
+cmp no_faliure_test_expected.txt no_faliure_test_out.txt 1>> run_out.txt 2>> run_out.txt
+cmp no_faliure_test_expected.txt no_faliure_test_out.txt 1>> run_out.txt 2>> run_out.txt
+cmp multiple_calls_test_expected.txt multiple_calls_test_out.txt 1>> run_out.txt 2>> run_out.txt
+cmp recursion_test_expected.txt recursion_test_out.txt 1>> run_out.txt 2>> run_out.txt
+cmp recursive_edge_test_expected.txt recursive_edge_test_out.txt 1>> run_out.txt 2>> run_out.txt
+if [ -s run_out.txt ]
+then
+echo "test failed, check run_out.txt for more information"
+else
+echo "you passed the test!"
+fi
